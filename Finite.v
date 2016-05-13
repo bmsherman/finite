@@ -1,6 +1,8 @@
 Require Iso.
 Require Fin.
 
+Set Asymmetric Patterns.
+
 (** A type family which is isomorphic to Fin.t, but defined in
     terms of simpler types by recursion, and is a little bit
     easier to work with. *)
@@ -50,7 +52,7 @@ refine (
 |}).
 reflexivity.
 intros b. destruct b. reflexivity. contradiction.
-Qed.
+Defined.
 
 Fixpoint split (m : nat)
   : forall (n : nat), Fin.t (m + n) -> (Fin.t m + Fin.t n).
@@ -169,7 +171,8 @@ induction m; simpl.
     * simpl. rewrite <- splitL in seqn. 
       apply splitInj in seqn. symmetry. assumption.
     * pose proof (IHm t). assert (b = Fin.R n t).
-      apply splitInj. rewrite seqn. symmetry. apply splitR.
+      apply (@splitInj n (m * n)). 
+      rewrite seqn. symmetry. apply splitR.
       rewrite H0. simpl.
       destruct (splitMult m n t) eqn:smeqn.
       simpl. rewrite <- H. reflexivity.
@@ -220,19 +223,19 @@ Fixpoint ty (t : U) : Set := match t with
 
 (** For every code for a finite type, we give its cardinality as
     a natural number. *)
-Fixpoint card (t : U) : nat := match t with
+Fixpoint Ucard (t : U) : nat := match t with
   | U0 => 0
   | U1 => 1
-  | UPlus a b => card a + card b
-  | UTimes a b => card a * card b
-  | UFunc a b => pow (card b) (card a)
+  | UPlus a b => Ucard a + Ucard b
+  | UTimes a b => Ucard a * Ucard b
+  | UFunc a b => pow (Ucard b) (Ucard a)
   | UFint n => n
   | UFin n => n
   end.
     
 (** Each type in the finite universe is isomorphic to the Fin.t
     family whose size is determined by the cardinality function above. *)
-Theorem finChar (t : U) : Iso.T (ty t) (Fin.t (card t)).
+Theorem finChar (t : U) : Iso.T (ty t) (Fin.t (Ucard t)).
 Proof.
 induction t; simpl.
 - apply Iso.Sym. apply (finIso 0).
@@ -268,6 +271,12 @@ Inductive T : Type -> Type :=
   | FIso : forall {A B}, T A -> Iso.T A B -> T B
 .
 
+Fixpoint card {A} (fin : T A) := match fin with
+  | F0 => 0
+  | FS _ n => S (card n)
+  | FIso _ _ x iso => card x
+  end.
+
 Definition fin (n : nat) : T (Fin.t n).
 Proof. eapply FIso. Focus 2. eapply Iso.Sym. eapply finIso.
 induction n; simpl.
@@ -281,15 +290,15 @@ eapply FIso. Focus 2. eapply Iso.Sym. apply finChar.
 apply fin.
 Qed.
 
-Definition iso {A : Type} : T A -> sigT (fun n => Iso.T A (Fin.t n)).
+Definition iso {A : Type} (fin : T A) : Iso.T A (Fin.t (card fin)).
 Proof.
-intros. induction X.
--  exists 0. apply (finChar U0).
-- destruct IHX. exists (S x). apply Iso.Sym. eapply Iso.Trans. 
+induction fin.
+-  apply (finChar U0).
+- apply Iso.Sym. eapply Iso.Trans. 
   apply finIso. simpl. apply Iso.PlusCong. apply Iso.Refl.
   eapply Iso.Trans. eapply Iso.Sym. apply finIso. apply Iso.Sym.
   assumption.
-- destruct IHX. exists x. eapply Iso.Trans. eapply Iso.Sym. eassumption.
+- eapply Iso.Trans. eapply Iso.Sym. eassumption.
   assumption. 
 Qed.
 
@@ -297,10 +306,9 @@ Definition true : T True := finU U1.
 
 Definition plus {A B : Type} (fa : T A) (fb : T B) : T (A + B).
 Proof.
-destruct (iso fa), (iso fb).
-eapply (@FIso (Fin.t (x + x0))). apply (finU (UFint (x + x0))).
+eapply (@FIso (Fin.t (card fa + card fb))). apply (finU (UFint _)).
 eapply Iso.Trans. eapply Iso.Sym. apply finPlus.
-eapply Iso.PlusCong; eapply Iso.Sym; eassumption.
+eapply Iso.PlusCong; eapply Iso.Sym; apply iso.
 Qed.
 
 Lemma finiteSig {A : Type} (fa : T A)
@@ -326,10 +334,10 @@ induction fa; intros b fb.
   (* Here we need Iso.sigmaProp, which we have yet to prove,
      so we cannot finish the proof here. *)
   (*apply Iso.sigmaProp.*)
-Defined.
+Admitted.
 
 (** Sigma types are closed under finiteness. *)
-Theorem sig {A : Type} {B : A -> Type} 
+Theorem Sig {A : Type} {B : A -> Type} 
   : T A 
   -> (forall (x : A), T (B x))
   -> T (sigT B).
@@ -346,7 +354,7 @@ Theorem times {A B : Type} : T A -> T B -> T (A * B).
 Proof.
 intros fa fb.
 eapply FIso. Focus 2. eapply Iso.Sym. eapply Iso.sigTimes.
-apply sig. assumption. apply (fun _ => fb).
+apply Sig. assumption. apply (fun _ => fb).
 Defined.
 
 Lemma finiteMapped {A : Type} (fa : T A)
@@ -396,3 +404,42 @@ induction finite; intros; try (decide equality).
   + pose proof (IHfinite a a0). destruct H; [left | right]; congruence.
 - eapply Iso.eq_dec; eassumption.
 Qed.
+
+Fixpoint elementsV {A} (fin : T A) : Vector.t A (card fin) := 
+  match fin in T A' return Vector.t A' (card fin) with
+  | F0 => Vector.nil False
+  | FS _ n => Vector.cons _ (inl I) _ (Vector.map inr (elementsV n))
+  | FIso _ _ x iso => let xs := elementsV x in
+     Vector.map (Iso.to iso) xs
+  end.
+
+
+Theorem fin_dec_subset {A} (fin : T A) {P : A -> Prop}
+  : (forall a, {P a} + {~ P a}) -> T (sig P).
+Proof.
+generalize dependent P. induction fin; intros P decP.
+- eapply FIso. apply F0.
+  eapply Iso.Trans. apply Iso.iso_true_subset. 
+  apply Iso.subsetSelf; firstorder.
+- eapply FIso. 2: eapply Iso.Sym; apply Iso.subset_sum_distr.
+  destruct (decP (inl I)).
+  + eapply FIso. Focus 2.
+    eapply Iso.PlusCong. apply (Iso.subsetSelf (fun _ => True)); intros; auto.
+    destruct a. tauto. destruct p0, q. reflexivity.
+    apply proof_irrelevance. apply Iso.Refl.
+    eapply FIso. Focus 2. eapply Iso.PlusCong.
+    apply Iso.iso_true_subset. apply Iso.Refl.
+    apply FS. apply IHfin. intros. apply decP.  
+  + eapply FIso. Focus 2.
+    eapply Iso.PlusCong. apply (Iso.subsetSelf (fun _ => False)); intros; auto.
+    destruct a. tauto. contradiction. destruct b. congruence.
+    apply Iso.Refl. eapply FIso. Focus 2. eapply Iso.PlusCong.
+    apply Iso.iso_false_subset. apply Iso.Refl.
+    eapply FIso. Focus 2.
+    eapply Iso.Trans. Focus 2. apply Iso.PlusComm.
+    apply botNull. apply IHfin. intros; apply decP.
+- eapply FIso. apply (IHfin (fun a => P (Iso.to t a))). 
+  intros. apply decP. apply Iso.subset with t; firstorder.
+  rewrite Iso.to_from. assumption. apply proof_irrelevance.
+  apply proof_irrelevance.
+Defined.

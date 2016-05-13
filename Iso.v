@@ -1,5 +1,8 @@
 Require Import FunctionalExtensionality.
 
+Set Asymmetric Patterns.
+
+
 (** Isomorphisms between types. *)
 Record T { A B : Type } : Type :=
   { to      : A -> B
@@ -41,7 +44,7 @@ refine (
 - rewrite (to_from AB).
   rewrite (to_from BC).
   reflexivity.
-Qed.
+Defined.
 
 (** * Sigma type isomorphisms *)
 (** Isomorphisms between Sigma types with different indexing types. *)
@@ -111,7 +114,7 @@ refine (
 Proof.
 intros. destruct a. reflexivity.
 intros. destruct b. reflexivity.
-Qed. 
+Defined. 
 
 (** * Function type isomorphisms *)
 (** Isomorphisms between function types with different argument types. *)
@@ -252,6 +255,21 @@ intros; apply functional_extensionality; intro x; simpl;
   reflexivity.
 Defined.
 
+Definition PlusComm {A B} : T (A + B) (B + A).
+Proof. refine (
+  {| to := fun x => match x with
+  | inl a => inr a
+  | inr b => inl b
+  end
+  ; from := fun y => match y with
+  | inl b => inr b
+  | inr a => inl a
+  end
+  |}); intros.
+- destruct a; reflexivity.
+- destruct b; reflexivity.
+Defined.
+
 Theorem eq_dec {A B : Type} : (forall x y : A, {x = y} + {x <> y})
   -> T A B -> forall x y : B, {x = y} + {x <> y}.
 Proof.
@@ -280,3 +298,105 @@ assert (forall (n : nat), f <> to0 n).
   rewrite <- H0 in H.
   apply (H (from0 f)). reflexivity.
 Qed.
+
+(** * Subsets *)
+
+Lemma sig_eq (A : Type) (P : A -> Prop) (Pirrel : forall a (p q : P a), p = q)
+  : forall (x y : sig P), projT1 x = projT1 y -> x = y.
+Proof.
+intros. destruct x, y. simpl in *.
+induction H. rewrite (Pirrel x p p0).
+reflexivity.
+Qed.
+
+Theorem subset {A B : Type} (P : A -> Prop) (Q : B -> Prop)
+  (i : T A B)
+  : (forall a, P a -> Q (to i a))
+  -> (forall b, Q b -> P (from i b))
+  -> (forall a (p q : P a), p = q)
+  -> (forall b (p q : Q b), p = q)
+  -> T (sig P) (sig Q).
+Proof.
+intros PimpQ QimpP Pirrel Qirrel.
+refine (
+  {| to := fun sa => match sa with
+    | exist a pa => exist Q (to i a) (PimpQ a pa)
+    end
+  ;  from := fun sb => match sb with
+    | exist b pb => exist P (from i b) (QimpP b pb)
+    end
+  |}
+); intros inp; destruct inp; simpl;
+  apply sig_eq; try assumption; simpl.
+  apply from_to. apply to_from.
+Defined.
+
+Theorem subsetSelf {A : Type} (P Q : A -> Prop)
+  : (forall a, P a <-> Q a)
+  -> (forall a (p q : P a), p = q)
+  -> (forall b (p q : Q b), p = q)
+  -> T (sig P) (sig Q).
+Proof.
+intros. apply (subset _ _ (Refl A)); try assumption; 
+ intros; simpl; firstorder.
+Defined.
+
+
+Theorem iso_true_subset {A} : T A (sig (fun _ : A => True)).
+Proof. refine (
+  {| to := fun a => exist _ a I
+   ; from := fun ea => let (a, _) := ea in a |}
+); intros.
+reflexivity. destruct b. destruct t. reflexivity.
+Defined.
+
+Theorem iso_false_subset {A} : T False (sig (fun _ : A => False)).
+Proof. refine (
+  {| to := False_rect _
+  ; from := fun p : sig (fun _ => False) => let (x, px) := p in False_rect _ px
+  |}); intros.
+- contradiction.
+- destruct b. contradiction.
+Defined.
+
+Definition subset_sum_distr {A B} {P : A + B -> Prop} :
+  T (sig P) (sig (fun a => P (inl a)) + sig (fun b => P (inr b))).
+Proof.
+refine (
+  {| to := fun (p : sig P) => let (x, px) := p in match x as x'
+  return P x' -> sig (fun a => P (inl a)) + sig (fun b => P (inr b)) with
+  | inl a => fun px' => inl (exist (fun a' => P (inl a')) a px')
+  | inr b => fun px' => inr (exist (fun b' => P (inr b')) b px')
+  end px
+  ; Iso.from := fun p => match p with
+  | inl (exist a pa) => exist _ (inl a) pa
+  | inr (exist b pb) => exist _ (inr b) pb
+  end
+  |}
+); intros.
+- destruct a as (x & px). destruct x; reflexivity.
+- destruct b as [s | s]; destruct s; reflexivity.
+Defined.
+
+(** Proof irrelevant-things *)
+
+Inductive inhabited {A : Type} : Prop :=
+  | elem (a : A) : inhabited.
+
+Arguments inhabited : clear implicits.
+
+Require Import ProofIrrelevance.
+
+Theorem inhabited_idempotent {A : Type} :
+  T A (inhabited A * A).
+Proof.
+refine (
+  {| to := fun a => (elem a, a)
+   ; from := fun p => snd p
+  |}
+).
+- intros. reflexivity.
+- intros. destruct b. simpl.
+  replace (elem a) with i by apply proof_irrelevance.
+  reflexivity.
+Defined.
